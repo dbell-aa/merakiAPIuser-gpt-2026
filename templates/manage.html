@@ -1,0 +1,92 @@
+{% extends "_base.html" %}
+{% block title %}Manage Admins{% endblock %}
+
+{% block content %}
+  <h1>Manage Meraki Admins <a href="{{ url_for('logout') }}" class="logout">[Logout / Change API Key]</a></h1>
+
+  <h2>Available Organizations:</h2>
+  {% if org_data %}
+  <ul>
+    {% for org_id, org_name in org_data.items() %}
+      <li>{{ org_name }} (ID: {{ org_id }})</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+    <p>No organizations found or error loading them.</p>
+  {% endif %}
+
+  <hr>
+
+  <h2>Perform Action</h2>
+  <form method="post" action="{{ url_for('manage_admin') }}">
+    <div class="form-group">
+      <label for="email">Admin Email:</label>
+      <input type="email" id="email" name="email" required>
+    </div>
+    <div class="form-group">
+      <label for="name">Admin Name (Required for Add actions):</label>
+      <input type="text" id="name" name="name">
+    </div>
+    <div class="form-group">
+      <label for="action">Action:</label>
+      <select id="action" name="action" required>
+        <option value="add">Add Admin to Specific Org</option>
+        <option value="delete">Delete Admin from Specific Org</option>
+        <option value="mass_add">Mass Add Admin to ALL Orgs</option>
+        <option value="mass_delete">Mass Delete Admin from ALL Orgs</option>
+        <option value="check">Check if Admin Exists in Specific Org</option>
+      </select>
+    </div>
+     <div class="form-group" id="org-select-group">
+        <label for="organization_id">Target Organization (for non-mass actions):</label>
+        <select id="organization_id" name="organization_id">
+            <option value="">-- Select Organization --</option>
+            {% for org_id, org_name in org_data.items() %}
+                <option value="{{ org_id }}">{{ org_name }} ({{ org_id }})</option>
+            {% endfor %}
+        </select>
+     </div>
+    <button type="submit">Perform Action</button>
+  </form>
+
+  <hr>
+
+  <h2>Results / Log</h2>
+  <pre id="results">
+    {% if results %}
+      {{ results | join('\n') }}
+    {% else %}
+      No actions performed yet in this session.
+    {% endif %}
+  </pre>
+
+  <script>
+    // Optional: Hide Org selector for mass actions
+    const actionSelect = document.getElementById('action');
+    const orgSelectGroup = document.getElementById('org-select-group');
+    const orgSelect = document.getElementById('organization_id');
+    const nameInput = document.getElementById('name');
+
+    function toggleOrgSelect() {
+      const selectedAction = actionSelect.value;
+      if (selectedAction.startsWith('mass_')) {
+        orgSelectGroup.style.display = 'none';
+        orgSelect.required = false;
+      } else {
+        orgSelectGroup.style.display = 'block';
+        orgSelect.required = true; // Make required only for non-mass actions
+      }
+      // Make name required only for add actions
+      if (selectedAction.endsWith('_add')) {
+          nameInput.required = true;
+      } else {
+          nameInput.required = false;
+      }
+    }
+
+    actionSelect.addEventListener('change', toggleOrgSelect);
+    // Initial check on page load
+    toggleOrgSelect();
+  </script>
+
+{% endblock %}
