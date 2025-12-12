@@ -11,6 +11,9 @@ app = Flask(__name__)
 # You can generate one using: python -c 'import os; print(os.urandom(24))'
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'your-default-secret-key') # Use environment variable or a default
 
+# Delay between Meraki API calls (seconds). Adjust via env MERAKI_CALL_DELAY if needed.
+CALL_DELAY_SECONDS = float(os.environ.get('MERAKI_CALL_DELAY', '1.2'))
+
 # --- Helper Functions (Adapted from your original code) ---
 
 def validate_email(email):
@@ -18,12 +21,47 @@ def validate_email(email):
     return re.match(email_pattern, email) is not None
 
 def log_message(message, category='info'):
-    """Helper to store messages to be displayed later."""
-    if 'results_log' not in session:
+    """Helper to store messages (with category) for later display and console output."""
+    if 'results_log' not in session or not isinstance(session['results_log'], list):
         session['results_log'] = []
+
+    entry = {
+        "category": category,
+        "message": f"[{category.upper()}] {message}"
+    }
+
     # Prepend to show newest first
-    session['results_log'].insert(0, f"[{category.upper()}] {message}")
-    session.modified = True # Important when modifying mutable session objects like lists
+    session['results_log'].insert(0, entry)
+    session.modified = True  # Important when modifying mutable session objects like lists
+
+    # Also print to console for debugging
+    print(entry["message"])
+
+
+def normalize_results_log():
+    """
+    Normalize results_log entries to dicts with category/message for template consumption.
+    Converts legacy string entries to info messages.
+    """
+    raw_entries = session.get('results_log', [])
+    normalized = []
+
+    for entry in raw_entries:
+        if isinstance(entry, dict) and 'message' in entry and 'category' in entry:
+            normalized.append(entry)
+        elif isinstance(entry, str):
+            normalized.append({"category": "info", "message": entry})
+
+    session['results_log'] = normalized
+    session.modified = True
+    return normalized
+
+
+def apply_rate_limit_delay():
+    """Pause between sequential API calls to avoid hitting rate limits."""
+    if CALL_DELAY_SECONDS > 0:
+        log_message(f"Waiting {CALL_DELAY_SECONDS} seconds before next call...", 'debug')
+        time.sleep(CALL_DELAY_SECONDS)
 
 
 def delete_admin(dashboard, organization_id, admin_id, org_name=""):
@@ -46,15 +84,19 @@ def delete_admin(dashboard, organization_id, admin_id, org_name=""):
 def add_admin(dashboard, organization_id, email, name, org_name=""):
     """Adds an admin. Uses passed dashboard object."""
     org_identifier = f"{org_name} ({organization_id})" if org_name else organization_id
+    log_message(f"Starting add_admin for {email} in {org_identifier}", 'debug')
+    
     admin_id = check_for_email_in_admins(dashboard, organization_id, email, org_name, suppress_found_msg=True) # Check first
     if admin_id:
         log_message(f"Admin with email {email} already exists (ID: {admin_id}) in organization {org_identifier}. Skipping addition.", 'info')
         return None # Indicate skipped
 
+    log_message(f"Attempting to create admin {email} in {org_identifier}", 'debug')
     try:
         response = dashboard.organizations.createOrganizationAdmin(
             organization_id, email, name, orgAccess="full" # Changed 'full' to 'orgAccess="full"' based on potential library changes
         )
+        log_message(f"API response when creating admin: {response}", 'debug')
         log_message(f"Successfully added admin {name} ({email}) to organization {org_identifier}. Response: {response.get('id', 'N/A')}", 'success')
         return response # Return the response which might contain the new admin ID
     except meraki.APIError as e:
@@ -67,15 +109,20 @@ def add_admin(dashboard, organization_id, email, name, org_name=""):
 def check_for_email_in_admins(dashboard, organization_id, email, org_name="", suppress_found_msg=False):
     """Checks for admin email. Uses passed dashboard object."""
     org_identifier = f"{org_name} ({organization_id})" if org_name else organization_id
+    log_message(f"Checking for email {email} in {org_identifier}", 'debug')
     try:
         admins = dashboard.organizations.getOrganizationAdmins(organization_id)
+        log_message(f"Found {len(admins)} admins in {org_identifier}", 'debug')
         for admin in admins:
             if admin['email'].lower() == email.lower():
                 if not suppress_found_msg:
                     log_message(f"Found admin: {admin['name']} (Email: {admin['email']}, ID: {admin['id']}) in org {org_identifier}", 'info')
+                log_message(f"Email {email} matched admin ID {admin['id']}", 'debug')
                 return admin['id'] # Return the admin ID if found
 
-        log_message(f"No admin with email {email} found in organization {org_identifier}.", 'info')
+        log_message(f"Email {email} not found in {org_identifier}", 'debug')
+        if not suppress_found_msg:
+            log_message(f"No admin with email {email} found in organization {org_identifier}.", 'info')
         return None # Return None if not found
 
     except meraki.APIError as e:
@@ -104,8 +151,7 @@ def mass_delete_admin(dashboard, organizations, email):
             # Logged already by check_for_email_in_admins
             no_email_found_orgs.append(org_name)
 
-        # Removed time.sleep for web context - be mindful of API rate limits!
-        # If rate limits become an issue, more complex handling (e.g., background tasks) is needed.
+        apply_rate_limit_delay()
 
     log_message(f"--- Mass Delete for {email} Complete ---", 'info')
     log_message(f"Checked {checked_count} organizations.", 'info')
@@ -116,27 +162,40 @@ def mass_delete_admin(dashboard, organizations, email):
 
 def mass_add_admin(dashboard, organizations, email, name):
     """Mass adds an admin. Uses passed dashboard object and org dict."""
+    log_message(f"Starting Mass Add for {name} ({email}) across {len(organizations)} organizations", 'debug')
     log_message(f"--- Starting Mass Add for {name} ({email}) ---", 'info')
     added_count = 0
     skipped_count = 0
+    failed_count = 0
     checked_count = 0
 
     for org_id, org_name in organizations.items():
         checked_count += 1
+        log_message(f"Processing org {checked_count}/{len(organizations)}: {org_name} (ID: {org_id})", 'debug')
         log_message(f"Processing organization: {org_name} (ID: {org_id})", 'info')
+        
         result = add_admin(dashboard, org_id, email, name, org_name)
+        
         if result is None: # Indicates skipped because already exists
             skipped_count += 1
+            log_message(f"SKIPPED - Admin already exists in {org_name}", 'debug')
         elif result: # Indicates success (got a response object)
             added_count += 1
-        # Failure is logged within add_admin
+            log_message(f"SUCCESS - Added admin to {org_name}", 'debug')
+        else: # Indicates failure
+            failed_count += 1
+            log_message(f"FAILED - Could not add admin to {org_name}", 'debug')
 
-        # Removed time.sleep for web context
+        apply_rate_limit_delay()
 
+    log_message("Mass Add Complete", 'debug')
+    log_message(f"Summary: {added_count} added, {skipped_count} skipped, {failed_count} failed", 'debug')
     log_message(f"--- Mass Add for {email} Complete ---", 'info')
     log_message(f"Checked {checked_count} organizations.", 'info')
     log_message(f"Successfully added admin to {added_count} organizations.", 'success')
     log_message(f"Skipped {skipped_count} organizations (admin likely already existed).", 'info')
+    if failed_count > 0:
+        log_message(f"Failed to add admin to {failed_count} organizations.", 'warning')
 
 
 # --- Flask Routes ---
@@ -156,18 +215,24 @@ def index():
 
         try:
             # Suppress console output from meraki library during init/fetch if desired
+            log_message("Initializing Meraki Dashboard API...", 'debug')
             dashboard = meraki.DashboardAPI(api_key, suppress_logging=True)
+            log_message("Getting organizations...", 'debug')
             organizations = dashboard.organizations.getOrganizations()
+            log_message(f"Found {len(organizations)} organizations", 'debug')
 
             if not organizations:
-                 flash('API key is valid, but no organizations were found or accessible.', 'warning')
-                 return render_template('index.html')
+                log_message("No organizations found for this API key.", 'warning')
+                flash('API key is valid, but no organizations were found or accessible.', 'warning')
+                return render_template('index.html')
 
             # Store essential info in session
             session['api_key'] = api_key
             session['org_data'] = {org['id']: org['name'] for org in organizations}
-            session['results_log'] = ["Successfully loaded organizations."] # Initialize log
+            log_message("Successfully loaded organizations.", 'success')
             session.modified = True # Mark session as modified
+            
+            log_message(f"Organizations loaded into session: {', '.join(session['org_data'].values())}", 'debug')
 
             flash('API Key accepted and organizations loaded.', 'success')
             return redirect(url_for('manage'))
@@ -191,7 +256,7 @@ def manage():
 
     # Pass org data and results log to the template
     org_data = session.get('org_data', {})
-    results_log = session.get('results_log', [])
+    results_log = normalize_results_log()
     return render_template('manage.html', org_data=org_data, results=results_log)
 
 @app.route('/manage-admin', methods=['POST'])
@@ -202,7 +267,7 @@ def manage_admin():
 
     api_key = session['api_key']
     org_data = session.get('org_data', {})
-    results_log = session.get('results_log', []) # Get current log
+    normalize_results_log() # Ensure results_log entries are in dict format for consistent logging
 
     # Get form data
     email = request.form.get('email')
@@ -245,9 +310,11 @@ def manage_admin():
                 delete_admin(dashboard, organization_id, admin_id, org_name)
             # No else needed, check_for_email_in_admins already logs if not found
         elif action == 'mass_add':
-             mass_add_admin(dashboard, org_data, email, name)
+            log_message(f"Starting mass_add action for {email}", 'debug')
+            log_message(f"Organization data contains {len(org_data)} organizations", 'debug')
+            mass_add_admin(dashboard, org_data, email, name)
         elif action == 'mass_delete':
-             mass_delete_admin(dashboard, org_data, email)
+            mass_delete_admin(dashboard, org_data, email)
         elif action == 'check':
             check_for_email_in_admins(dashboard, organization_id, email, org_name) # This function already logs results
         else:

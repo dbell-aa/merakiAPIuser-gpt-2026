@@ -52,13 +52,120 @@
   <hr>
 
   <h2>Results / Log</h2>
-  <pre id="results">
-    {% if results %}
-      {{ results | join('\n') }}
-    {% else %}
-      No actions performed yet in this session.
-    {% endif %}
-  </pre>
+  <div class="log-controls">
+    <span class="log-label">Debug messages</span>
+    <label class="toggle-switch">
+      <input type="checkbox" id="debugToggle" aria-label="Toggle debug messages">
+      <span class="slider">
+        <span class="slider-label slider-off">Off</span>
+        <span class="slider-label slider-on">On</span>
+      </span>
+    </label>
+  </div>
+  <pre id="results" class="log-output"></pre>
+
+  <style>
+    .log-output {
+      max-height: 800px;
+      overflow-y: auto;
+      padding: 1rem;
+      background: #111;
+      color: #f8f8f8;
+      border-radius: 8px;
+      border: 1px solid #333;
+      white-space: pre-wrap;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      box-sizing: border-box;
+    }
+
+    .log-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .log-label {
+      font-weight: 600;
+    }
+
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 72px;
+      height: 32px;
+      background: #ccc;
+      border-radius: 16px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      padding: 2px;
+      box-sizing: border-box;
+    }
+
+    .toggle-switch input {
+      display: none;
+    }
+
+    .toggle-switch .slider {
+      position: relative;
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: 14px;
+      background: #f2f2f2;
+    }
+
+    .toggle-switch .slider::before {
+      content: "";
+      position: absolute;
+      height: 28px;
+      width: 28px;
+      left: 2px;
+      top: 2px;
+      background-color: #fff;
+      border-radius: 50%;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      transition: transform 0.2s ease, background-color 0.2s ease;
+    }
+
+    .toggle-switch input:checked + .slider {
+      background: linear-gradient(90deg, #2563eb, #3b82f6);
+    }
+
+    .toggle-switch input:checked + .slider::before {
+      transform: translateX(40px);
+      background-color: #e5e7eb;
+    }
+
+    .slider-label {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      font-weight: 700;
+      color: #555;
+      pointer-events: none;
+    }
+
+    .slider-off {
+      left: 10px;
+    }
+
+    .slider-on {
+      right: 10px;
+      color: #e5e7eb;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .toggle-switch input:checked + .slider .slider-on {
+      opacity: 1;
+    }
+
+    .toggle-switch input:checked + .slider .slider-off {
+      opacity: 0;
+    }
+  </style>
 
   <script>
     // Optional: Hide Org selector for mass actions
@@ -66,6 +173,35 @@
     const orgSelectGroup = document.getElementById('org-select-group');
     const orgSelect = document.getElementById('organization_id');
     const nameInput = document.getElementById('name');
+    const resultsElement = document.getElementById('results');
+    const debugToggle = document.getElementById('debugToggle');
+
+    // Results data from the server (array of {message, category})
+    const resultsData = {{ results | tojson | safe }};
+
+    function normalizeEntries(entries) {
+      return (entries || []).map(entry => {
+        if (entry && typeof entry === 'object' && 'message' in entry && 'category' in entry) {
+          return entry;
+        }
+        return { message: String(entry || ''), category: 'info' };
+      });
+    }
+
+    const normalizedResults = normalizeEntries(resultsData);
+
+    function renderLogs() {
+      const showDebug = debugToggle.checked;
+      const filtered = showDebug
+        ? normalizedResults
+        : normalizedResults.filter(entry => entry.category !== 'debug');
+
+      const text = filtered.length
+        ? filtered.map(entry => entry.message).join('\n')
+        : 'No actions performed yet in this session.';
+
+      resultsElement.textContent = text;
+    }
 
     function toggleOrgSelect() {
       const selectedAction = actionSelect.value;
@@ -85,8 +221,10 @@
     }
 
     actionSelect.addEventListener('change', toggleOrgSelect);
+    debugToggle.addEventListener('change', renderLogs);
     // Initial check on page load
     toggleOrgSelect();
+    renderLogs();
   </script>
 
 {% endblock %}
