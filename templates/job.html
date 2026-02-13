@@ -1,0 +1,68 @@
+{% extends "_base.html" %}
+{% block title %}Job Progress{% endblock %}
+
+{% block content %}
+<h1>Operation in Progress</h1>
+
+<div style="margin:20px 0;">
+  <div style="background:#ddd; border-radius:8px; height:24px; width:100%;">
+    <div id="progressBar" style="
+      height:24px;
+      width:0%;
+      background:#4CAF50;
+      border-radius:8px;
+      text-align:center;
+      color:white;
+      line-height:24px;
+      font-weight:bold;
+    ">
+      0%
+    </div>
+  </div>
+</div>
+
+<h2>Log Output</h2>
+<pre id="logBox" style="
+  max-height:400px;
+  overflow-y:auto;
+  background:#111;
+  color:#eee;
+  padding:1rem;
+  border-radius:8px;
+"></pre>
+
+<script>
+const jobId = "{{ job_id }}";
+const progressBar = document.getElementById("progressBar");
+const logBox = document.getElementById("logBox");
+
+function updateStatus() {
+  fetch(`/job_status/${jobId}`)
+    .then(res => res.json())
+    .then(data => {
+      const progress = data.progress || 0;
+      progressBar.style.width = progress + "%";
+      progressBar.textContent = progress + "%";
+
+      if (data.logs) {
+        logBox.textContent = data.logs
+          .map(l => l.message)
+          .join("\n");
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      if (data.status !== "complete") {
+        setTimeout(updateStatus, 2000);
+      } else {
+        progressBar.style.background = "#2196F3";
+        progressBar.textContent = "Complete";
+      }
+    });
+}
+
+updateStatus();
+</script>
+
+<a href="{{ url_for('manage') }}">← Back to Manage Page</a>
+
+{% endblock %}

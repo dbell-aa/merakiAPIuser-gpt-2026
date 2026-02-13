@@ -2,13 +2,15 @@
 {% block title %}Enter API Key{% endblock %}
 
 {% block content %}
-  <h1>Meraki Admin Tool</h1>
-  <p>Please enter your Meraki API key to begin.</p>
-  <form method="post" action="{{ url_for('index') }}">
-    <div class="form-group">
-      <label for="api_key">Meraki API Key:</label>
-      <input type="password" id="api_key" name="api_key" required>
-    </div>
-    <button type="submit">Load Organizations</button>
-  </form>
+<h1>Meraki Admin Tool</h1>
+<p>Please enter your Meraki API key to begin.</p>
+
+<form method="post" action="{{ url_for('index') }}">
+  <div class="form-group">
+    <label for="api_key">Meraki API Key:</label>
+    <input type="password" id="api_key" name="api_key" required>
+  </div>
+
+  <button type="submit">Load Organizations</button>
+</form>
 {% endblock %}
